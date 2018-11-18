@@ -58,11 +58,10 @@
 #include "Utils/terminal.h"
 #include "Utils/utils.h"
 #include "usb_device.h"
-#include "stm32_tm1637.h"
 
 #include "interface_nrf24.h"
 
-uint8_t netAddress[] = {0x01, 0x44, 0x55};
+uint8_t netAddress[] = {0x03, 0x44, 0x55};
 #define payload_length 16
 
 /* Private variables ---------------------------------------------------------*/
@@ -163,21 +162,37 @@ void sampleUPS(int &temperature, int &voltage, int &current)
 	sampleAnalog(temperature, v0, v1);
 
 	voltage = (v0 / 1000 + 160) * 4.3;
-	current = (2365600 - v1) / 100 ;
+	current = ((float)v1 * 0.005728412) - 13703.0;//	((2340800 - v1) / -200) - 240 ;
 }
 
 void report(uint8_t *address)
 {
+	//HAL_Delay(500);
 	int temperature, volt, amp;
 	sampleUPS(temperature, volt, amp);
 	nodeData_s pay;
 	memset(&pay, 0, 16);
 	pay.timestamp = HAL_GetTick();
 	pay.temperature = temperature;
+
+	if(HAL_GPIO_ReadPin(MAINS_GPIO_Port, MAINS_Pin))
+		pay.inputs = 1;
+
 	pay.voltages[0] = volt;
 	pay.voltages[1] = (32768 + amp);
+	int result = -3;
+	int retries = 3;
+	do
+	{
+		result = InterfaceNRF24::get()->transmit(address, (uint8_t*)&pay, 16);
+		if(result < 0)
+		{
+			printf("  retry tx...\n");
+			HAL_Delay(1000);
+		}
+	}while((result < 0) && (retries--));
 
-	printf("TX result %d\n", InterfaceNRF24::get()->transmit(address, (uint8_t*)&pay, 16));
+	printf("TX result %d\n", result);
 }
 
 void reportNow()
@@ -283,9 +298,6 @@ int main(void)
   printf("Bluepill @ %dHz\n", (int)HAL_RCC_GetSysClockFreq());
   MX_RTC_Init();
 
-  tm1637Init();
-  tm1637DisplayDecimal(8888, 0);
-
   /* Infinite loop */
   while (1)
   {
@@ -299,19 +311,20 @@ int main(void)
       if(cnt++ == 50)//every 5 seconds
       {
     	  cnt = 0;
-    	  static bool dispVoltage = false;
-    	  int temp, a, v;
-    	  sampleUPS(temp, v, a);
+    	  static bool mainsVoltage = true;
 
-    	  if(dispVoltage)
+
+    	  bool currentMains = HAL_GPIO_ReadPin(MAINS_GPIO_Port, MAINS_Pin);
+    	  if(mainsVoltage != currentMains)
     	  {
-    		  dispVoltage = false;
-        	  tm1637DisplayDecimal(v / 10, 1);
-    	  }
-    	  else
-    	  {
-    		  dispVoltage = true;
-    		  tm1637DisplayDecimal(a / 10, 1);
+    		  mainsVoltage = currentMains;
+    		  if(mainsVoltage)
+    			  printf("MAINS present\n");
+    		  else
+    			  printf("MAINS failure\n");
+
+    		  reportNow();
+
     	  }
       }
 
@@ -397,6 +410,7 @@ static void MX_RTC_Init(void)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
+  HAL_RTCEx_DeactivateTamper(&hrtc, RTC_TAMPER_1);
 
     /**Initialize RTC and set the Time and Date 
     */
@@ -453,6 +467,7 @@ static void MX_GPIO_Init(void)
 	__HAL_RCC_GPIOB_CLK_ENABLE();
 	__HAL_RCC_GPIOA_CLK_ENABLE();
 
+	//USB disable
 	GPIO_InitStruct.Pin = GPIO_PIN_12;
 	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
 	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -500,6 +515,12 @@ static void MX_GPIO_Init(void)
 	GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
 	GPIO_InitStruct.Pull = GPIO_PULLDOWN;
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : MAINS_Pin */
+	GPIO_InitStruct.Pin = MAINS_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+	HAL_GPIO_Init(MAINS_GPIO_Port, &GPIO_InitStruct);
 
 }
 

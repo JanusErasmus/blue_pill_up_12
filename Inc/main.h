@@ -65,6 +65,8 @@
 #define NRF_CE_Pin GPIO_PIN_1
 #define NRF_IRQ_GPIO_Port GPIOB
 #define NRF_IRQ_Pin GPIO_PIN_0
+#define MAINS_GPIO_Port GPIOB
+#define MAINS_Pin GPIO_PIN_12
 
 
 /* ########################## Assert Selection ############################## */
