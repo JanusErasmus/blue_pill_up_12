@@ -61,7 +61,7 @@
 
 #include "interface_nrf24.h"
 
-uint8_t netAddress[] = {0x03, 0x44, 0x55};
+uint8_t netAddress[] = {0x02, 0x44, 0x55};
 #define payload_length 16
 
 /* Private variables ---------------------------------------------------------*/
@@ -90,7 +90,7 @@ typedef struct {
 	uint16_t temperature;	//2
 }__attribute__((packed, aligned(4))) nodeData_s;
 
-void sampleAnalog(int &temperature, int &voltage0, int &voltage1)
+void sampleAnalog(double &temperature, double &voltage0, double &voltage1)
 {
 	uint32_t adc0 = 0;
 	uint32_t adc1 = 0;
@@ -112,7 +112,7 @@ void sampleAnalog(int &temperature, int &voltage0, int &voltage1)
 		HAL_ADC_Start(&hadc1);
 		if(HAL_ADC_PollForConversion(&hadc1, 1000) == HAL_OK)
 		{
-			adc1 = HAL_ADC_GetValue(&hadc1);
+			adc1 += HAL_ADC_GetValue(&hadc1);
 			//printf("ADC: %d\n", adc);
 		}
 
@@ -129,57 +129,65 @@ void sampleAnalog(int &temperature, int &voltage0, int &voltage1)
 			adc3 += HAL_ADC_GetValue(&hadc1);
 			//printf("ADC: %d\n", adc);
 		}
+		HAL_Delay(100);
 	}
 
-	adc0 <<= 4;
-	adc1 <<= 4;
-	adc2 <<= 4;
-	adc3 <<= 4;
+	adc0 >>= 4;
+	adc1 >>= 4;
+	adc2 >>= 4;
+	adc3 >>= 4;
 
 	//this amount of steps measure 1.2V
-	uint32_t step = 1200000000 / adc0;
-	//printf("ADC Step %d\n", (int)step);
+	double step = 1.2 / adc0;
+	//printf("vref %d - ADC Step %d\n", (int)adc0, (int)step);
 
-	int voltage = adc1 * step;
-	//printf(" *	%d\n", (int)voltage);
-	voltage = 1.43e9 - voltage;
-	//printf(" -	%d\n", voltage);
-	voltage /= 4.3e3;
-	//printf(" /	%d\n", voltage);
-	temperature = 25000.0 + voltage;
+	//printf(" .	%d\n", (int)adc1);
+	double voltage = ((double)adc1 * step);
+	//printf(" *	%0.3f\n", voltage);
+	voltage = 1.43 - voltage;
+	//printf(" -	%0.3f\n", voltage);
+	voltage /= 0.0043;
+	//printf(" /	%0.3f\n", voltage);
+	temperature = (25.0 + voltage) - 10;
 
 	//measure raw voltage
-	step /= 1000;
-	voltage0 = adc2 * step;
-	voltage1 = adc3 * step;
+	voltage0 = (double)adc2 * step;
+	voltage1 = (double)adc3 * step;
 
 	HAL_ADC_Stop(&hadc1);
 }
 
-void sampleUPS(int &temperature, int &voltage, int &current)
+void sampleUPS(double &temperature, double &voltage, double &current)
 {
-	int v0, v1;
+	double v0, v1;
 	sampleAnalog(temperature, v0, v1);
+//	printf("T : %0.3f\n", temperature);
+//	printf("v0: %0.3f\n", v0);
+//	printf("v1: %0.3f\n", v1);
 
-	voltage = (v0 / 1000 + 160) * 4.3;
-	current = ((float)v1 * 0.005728412) - 13703.0;//	((2340800 - v1) / -200) - 240 ;
+	voltage = v0 * 4.3;
+	current = ((v1 - 2.5) * 5) - 0.085;
+
+	//	printf("T: %0.3f\n", temperature);
+	//	printf("V: %0.3f\n", voltage);
+	//	printf("A: %0.3f\n", current);
 }
 
 void report(uint8_t *address)
 {
 	//HAL_Delay(500);
-	int temperature, volt, amp;
+	double temperature, volt, amp;
 	sampleUPS(temperature, volt, amp);
 	nodeData_s pay;
 	memset(&pay, 0, 16);
 	pay.timestamp = HAL_GetTick();
-	pay.temperature = temperature;
+	pay.temperature = temperature * 1000;
 
 	if(HAL_GPIO_ReadPin(MAINS_GPIO_Port, MAINS_Pin))
 		pay.inputs = 1;
 
-	pay.voltages[0] = volt;
-	pay.voltages[1] = (32768 + amp);
+	pay.voltages[0] = volt * 1000;
+	pay.voltages[1] = 32768 + (amp * 1000);
 	int result = -3;
 	int retries = 3;
 	do
@@ -308,7 +316,7 @@ int main(void)
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
       static int cnt = 0;
-      if(cnt++ == 50)//every 5 seconds
+      if(cnt++ >= 50)//every 5 seconds
       {
     	  cnt = 0;
     	  static bool mainsVoltage = true;
@@ -507,7 +515,7 @@ static void MX_GPIO_Init(void)
 	/*Configure GPIO pin : ADC12_IN0 */
 	GPIO_InitStruct.Pin = GPIO_PIN_0;
 	GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Pull = GPIO_PULLDOWN;
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 	/*Configure GPIO pin : ADC12_IN1 */
@@ -700,11 +708,11 @@ void adc(uint8_t argc, char **argv)
 //	printf("voltage0: %d\n", voltage0);
 //	printf("voltage1: %d\n", voltage1);
 
-	int temperature, amp, volt;
+	double temperature, amp, volt;
 	sampleUPS(temperature, volt, amp);
-	printf("temp: %d\n", temperature);
-	printf("volt: %d\n", volt);
-	printf("amp: %d\n", amp);
+	printf("T: %0.3f\n", temperature);
+	printf("V: %0.3f\n", volt);
+	printf("A: %0.3f\n", amp);
 }
 
 
